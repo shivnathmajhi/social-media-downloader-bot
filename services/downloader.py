@@ -3,13 +3,12 @@ import sys
 import uuid
 import glob
 import subprocess
-from pathlib import Path
 
 import yt_dlp
 
 
 # =========================================================
-# CONFIG
+# CONFIGURATION
 # =========================================================
 
 TEMP_DIR = "temp"
@@ -36,13 +35,10 @@ QUALITY_FORMATS = {
 
 
 # =========================================================
-# PROGRESS HELPER
+# PROGRESS CALLBACK
 # =========================================================
 
 def safe_progress(progress_callback, data):
-    """
-    Progress callback must NEVER break yt-dlp/FFmpeg.
-    """
 
     if progress_callback is None:
         return
@@ -58,7 +54,7 @@ def safe_progress(progress_callback, data):
 
 
 # =========================================================
-# HUMAN SIZE
+# FORMAT BYTES
 # =========================================================
 
 def format_bytes(value):
@@ -74,6 +70,7 @@ def format_bytes(value):
         "KB",
         "MB",
         "GB",
+        "TB",
     ]
 
     for unit in units:
@@ -83,7 +80,7 @@ def format_bytes(value):
 
         value /= 1024
 
-    return f"{value:.2f} TB"
+    return f"{value:.2f} PB"
 
 
 # =========================================================
@@ -104,18 +101,17 @@ def format_eta(seconds):
     if seconds < 0:
         return "--"
 
-    minutes, seconds = divmod(
+    hours, remainder = divmod(
         seconds,
-        60
+        3600
     )
 
-    hours, minutes = divmod(
-        minutes,
+    minutes, seconds = divmod(
+        remainder,
         60
     )
 
     if hours:
-
         return (
             f"{hours}h "
             f"{minutes}m "
@@ -123,7 +119,6 @@ def format_eta(seconds):
         )
 
     if minutes:
-
         return (
             f"{minutes}m "
             f"{seconds}s"
@@ -133,17 +128,19 @@ def format_eta(seconds):
 
 
 # =========================================================
-# YOUTUBE COOKIE SUPPORT
+# YOUTUBE COOKIES
 # =========================================================
 
 def add_youtube_options(options):
-    """
-    Add YouTube authentication settings when configured.
 
-    Railway:
+    """
+    Add YouTube cookie file if configured.
+
+    Railway environment variable:
+
         YOUTUBE_COOKIES_FILE=/app/cookies/youtube.txt
 
-    The cookie file must NOT be committed to GitHub.
+    Never commit the cookie file to GitHub.
     """
 
     cookies_file = os.getenv(
@@ -151,34 +148,39 @@ def add_youtube_options(options):
         ""
     ).strip()
 
-    if cookies_file:
+    if not cookies_file:
 
-        cookies_file = os.path.abspath(
+        print(
+            "YouTube cookies: not configured"
+        )
+
+        return
+
+    cookies_file = os.path.abspath(
+        cookies_file
+    )
+
+    if os.path.isfile(
+        cookies_file
+    ):
+
+        options["cookiefile"] = (
             cookies_file
         )
 
-        if os.path.isfile(cookies_file):
-
-            options["cookiefile"] = cookies_file
-
-            print(
-                "YouTube cookies:",
-                "enabled"
-            )
-
-        else:
-
-            print(
-                "WARNING: YOUTUBE_COOKIES_FILE was set "
-                "but the file does not exist:",
-                cookies_file
-            )
+        print(
+            "YouTube cookies: enabled"
+        )
 
     else:
 
         print(
-            "YouTube cookies:",
-            "not configured"
+            "WARNING: YouTube cookie file "
+            "does not exist:"
+        )
+
+        print(
+            cookies_file
         )
 
 
@@ -187,21 +189,79 @@ def add_youtube_options(options):
 # =========================================================
 
 def add_common_youtube_options(options):
+
     """
-    Settings needed by current yt-dlp YouTube extraction.
+    Current yt-dlp YouTube configuration.
+
+    IMPORTANT:
+    js_runtimes must be a dictionary whose values
+    are dictionaries.
     """
 
-    # Deno is installed in the Docker image.
+    # -----------------------------------------------------
+    # DENO
+    # -----------------------------------------------------
+
     options["js_runtimes"] = {
-        "deno": "/root/.deno/bin/deno"
+        "deno": {}
     }
 
-    # Allow yt-dlp to use the bundled EJS components.
+    # -----------------------------------------------------
+    # EJS
+    # -----------------------------------------------------
+
     options["remote_components"] = [
         "ejs:npm"
     ]
 
-    add_youtube_options(options)
+    # -----------------------------------------------------
+    # YOUTUBE COOKIES
+    # -----------------------------------------------------
+
+    add_youtube_options(
+        options
+    )
+
+
+# =========================================================
+# FACEBOOK OPTIONS
+# =========================================================
+
+def add_facebook_options(options):
+
+    options["http_headers"] = {
+
+        "User-Agent":
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/151.0.0.0 "
+            "Safari/537.36",
+
+        "Referer":
+            "https://www.facebook.com/",
+    }
+
+    cookies_file = os.getenv(
+        "FACEBOOK_COOKIES_FILE",
+        ""
+    ).strip()
+
+    if not cookies_file:
+        return
+
+    cookies_file = os.path.abspath(
+        cookies_file
+    )
+
+    if os.path.isfile(
+        cookies_file
+    ):
+
+        options["cookiefile"] = (
+            cookies_file
+        )
 
 
 # =========================================================
@@ -219,18 +279,36 @@ def get_available_qualities(
         {
             "stage": "fetching",
             "percent": 0,
-            "message": "Fetching video information..."
+            "message":
+                "Fetching video information..."
         }
     )
 
     print()
-    print("=" * 60)
+    print("=" * 70)
     print("FETCHING VIDEO INFORMATION")
-    print("=" * 60)
+    print("=" * 70)
+
+    print(
+        "Platform:",
+        platform
+    )
+
+    print(
+        "URL:",
+        url
+    )
+
+    print(
+        "yt-dlp version:",
+        yt_dlp.version.__version__
+    )
+
+    print("=" * 70)
 
     options = {
 
-        "quiet": True,
+        "quiet": False,
 
         "no_warnings": False,
 
@@ -240,11 +318,15 @@ def get_available_qualities(
 
         "socket_timeout": 60,
 
+        "retries": 5,
+
+        "fragment_retries": 5,
+
     }
 
-    # ---------------------------------------------------------
+    # =====================================================
     # YOUTUBE
-    # ---------------------------------------------------------
+    # =====================================================
 
     if platform == "youtube":
 
@@ -252,50 +334,19 @@ def get_available_qualities(
             options
         )
 
-    # ---------------------------------------------------------
+    # =====================================================
     # FACEBOOK
-    # ---------------------------------------------------------
+    # =====================================================
 
-    if platform == "facebook":
+    elif platform == "facebook":
 
-        options[
-            "http_headers"
-        ] = {
+        add_facebook_options(
+            options
+        )
 
-            "User-Agent":
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/151.0.0.0 "
-                "Safari/537.36",
-
-            "Referer":
-                "https://www.facebook.com/",
-        }
-
-        cookies_file = os.getenv(
-            "FACEBOOK_COOKIES_FILE",
-            ""
-        ).strip()
-
-        if cookies_file:
-
-            cookies_file = os.path.abspath(
-                cookies_file
-            )
-
-            if os.path.isfile(
-                cookies_file
-            ):
-
-                options[
-                    "cookiefile"
-                ] = cookies_file
-
-    # ---------------------------------------------------------
+    # =====================================================
     # EXTRACT
-    # ---------------------------------------------------------
+    # =====================================================
 
     with yt_dlp.YoutubeDL(
         options
@@ -304,6 +355,12 @@ def get_available_qualities(
         info = ydl.extract_info(
             url,
             download=False
+        )
+
+    if not info:
+
+        raise RuntimeError(
+            "yt-dlp returned no video information."
         )
 
     formats = info.get(
@@ -338,9 +395,8 @@ def get_available_qualities(
                 height
             )
 
-    available = []
-
     requested_heights = [
+
         144,
         240,
         360,
@@ -352,8 +408,12 @@ def get_available_qualities(
         2160,
     ]
 
+    available = []
+
     for height in requested_heights:
 
+        # If there is a format at or above
+        # requested resolution, make it available.
         if any(
             available_height >= height
             for available_height in heights
@@ -375,19 +435,19 @@ def get_available_qualities(
         )
     )
 
-    safe_progress(
-        progress_callback,
-        {
-            "stage": "fetching",
-            "percent": 100,
-            "message": "Video information received."
-        }
-    )
-
     title = info.get(
         "title",
         "Video"
     )
+
+    duration = info.get(
+        "duration"
+    )
+
+    print()
+    print("=" * 70)
+    print("VIDEO INFORMATION")
+    print("=" * 70)
 
     print(
         "Title:",
@@ -395,20 +455,52 @@ def get_available_qualities(
     )
 
     print(
-        "Available qualities:",
+        "Duration:",
+        duration
+    )
+
+    print(
+        "Available resolutions:",
+        sorted(
+            heights
+        )
+    )
+
+    print(
+        "Selectable qualities:",
         available
     )
 
-    print("=" * 60)
+    print("=" * 70)
+
+    safe_progress(
+        progress_callback,
+        {
+            "stage": "fetching",
+            "percent": 100,
+            "message":
+                "Video information received."
+        }
+    )
 
     return {
-        "title": title,
-        "qualities": available,
+
+        "title":
+            title,
+
+        "qualities":
+            available,
+
+        "duration":
+            duration,
+
+        "formats":
+            formats,
     }
 
 
 # =========================================================
-# YT-DLP DOWNLOAD
+# DOWNLOAD MEDIA
 # =========================================================
 
 def download_media(
@@ -427,7 +519,8 @@ def download_media(
             "total": 0,
             "speed": 0,
             "eta": None,
-            "message": "Starting download..."
+            "message":
+                "Starting download..."
         }
     )
 
@@ -444,9 +537,9 @@ def download_media(
     )
 
     print()
-    print("=" * 60)
+    print("=" * 70)
     print("DOWNLOAD STARTED")
-    print("=" * 60)
+    print("=" * 70)
 
     print(
         "Platform:",
@@ -464,26 +557,30 @@ def download_media(
     )
 
     print(
+        "URL:",
+        url
+    )
+
+    print(
         "yt-dlp:",
         yt_dlp.version.__version__
     )
 
-    print(
-        "Python:",
-        sys.executable
-    )
-
-    print("=" * 60)
+    print("=" * 70)
 
     last_percent = -1
 
-    def hook(data):
+    def progress_hook(data):
 
         nonlocal last_percent
 
         status = data.get(
             "status"
         )
+
+        # =================================================
+        # DOWNLOADING
+        # =================================================
 
         if status == "downloading":
 
@@ -528,10 +625,7 @@ def download_media(
                 percent
             )
 
-            if (
-                rounded_percent !=
-                last_percent
-            ):
+            if rounded_percent != last_percent:
 
                 last_percent = (
                     rounded_percent
@@ -566,6 +660,10 @@ def download_media(
                     }
                 )
 
+        # =================================================
+        # DOWNLOAD FINISHED
+        # =================================================
+
         elif status == "finished":
 
             safe_progress(
@@ -581,6 +679,10 @@ def download_media(
                         "Download complete. Preparing video..."
                 }
             )
+
+    # =====================================================
+    # YT-DLP OPTIONS
+    # =====================================================
 
     options = {
 
@@ -624,13 +726,15 @@ def download_media(
             4,
 
         "progress_hooks":
-            [hook],
+            [
+                progress_hook
+            ],
 
     }
 
-    # ---------------------------------------------------------
+    # =====================================================
     # YOUTUBE
-    # ---------------------------------------------------------
+    # =====================================================
 
     if platform == "youtube":
 
@@ -638,50 +742,19 @@ def download_media(
             options
         )
 
-    # ---------------------------------------------------------
+    # =====================================================
     # FACEBOOK
-    # ---------------------------------------------------------
+    # =====================================================
 
-    if platform == "facebook":
+    elif platform == "facebook":
 
-        options[
-            "http_headers"
-        ] = {
+        add_facebook_options(
+            options
+        )
 
-            "User-Agent":
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/151.0.0.0 "
-                "Safari/537.36",
-
-            "Referer":
-                "https://www.facebook.com/",
-        }
-
-        cookies_file = os.getenv(
-            "FACEBOOK_COOKIES_FILE",
-            ""
-        ).strip()
-
-        if cookies_file:
-
-            cookies_file = os.path.abspath(
-                cookies_file
-            )
-
-            if os.path.isfile(
-                cookies_file
-            ):
-
-                options[
-                    "cookiefile"
-                ] = cookies_file
-
-    # ---------------------------------------------------------
+    # =====================================================
     # DOWNLOAD
-    # ---------------------------------------------------------
+    # =====================================================
 
     with yt_dlp.YoutubeDL(
         options
@@ -692,37 +765,35 @@ def download_media(
             download=True
         )
 
-    title = info.get(
-        "title",
-        "Downloaded Video"
-    )
+        title = info.get(
+            "title",
+            "Downloaded Video"
+        )
 
-    # ---------------------------------------------------------
-    # FIND FINAL FILE
-    # ---------------------------------------------------------
+        # Prepare filename before
+        # YoutubeDL context closes.
+        prepared_filename = (
+            ydl.prepare_filename(
+                info
+            )
+        )
+
+    # =====================================================
+    # FIND OUTPUT FILE
+    # =====================================================
 
     possible_files = []
 
-    try:
+    possible_files.append(
+        prepared_filename
+    )
 
-        prepared = ydl.prepare_filename(
-            info
-        )
-
-        possible_files.append(
-            prepared
-        )
-
-        possible_files.append(
-            os.path.splitext(
-                prepared
-            )[0]
-            + ".mp4"
-        )
-
-    except Exception:
-
-        pass
+    possible_files.append(
+        os.path.splitext(
+            prepared_filename
+        )[0]
+        + ".mp4"
+    )
 
     possible_files.extend(
         glob.glob(
@@ -735,42 +806,85 @@ def download_media(
 
     final_file = None
 
-    for file_path in possible_files:
+    for path in possible_files:
 
         if not os.path.isfile(
-            file_path
+            path
         ):
             continue
 
-        if file_path.endswith(
+        if path.endswith(
             ".part"
         ):
             continue
 
-        if file_path.endswith(
+        if path.endswith(
             ".ytdl"
         ):
             continue
 
-        if os.path.getsize(
-            file_path
-        ) <= 0:
+        try:
+
+            size = os.path.getsize(
+                path
+            )
+
+        except Exception:
+
             continue
 
-        final_file = file_path
+        if size <= 0:
+            continue
 
-        if file_path.lower().endswith(
+        if path.lower().endswith(
             ".mp4"
         ):
 
+            final_file = path
+
             break
+
+        if final_file is None:
+
+            final_file = path
 
     if not final_file:
 
         raise FileNotFoundError(
-            "yt-dlp finished but the "
-            "final downloaded file was not found."
+            "yt-dlp finished but "
+            "the final video file was not found."
         )
+
+    final_size = os.path.getsize(
+        final_file
+    )
+
+    final_mb = (
+        final_size /
+        (1024 * 1024)
+    )
+
+    print()
+    print("=" * 70)
+    print("DOWNLOAD COMPLETE")
+    print("=" * 70)
+
+    print(
+        "Title:",
+        title
+    )
+
+    print(
+        "File:",
+        final_file
+    )
+
+    print(
+        "Size:",
+        f"{final_mb:.2f} MB"
+    )
+
+    print("=" * 70)
 
     safe_progress(
         progress_callback,
@@ -782,23 +896,8 @@ def download_media(
                 100,
 
             "message":
-                "Video conversion complete."
+                "Video preparation complete."
         }
-    )
-
-    print()
-    print(
-        "Downloaded:",
-        final_file
-    )
-
-    print(
-        "Size:",
-        format_bytes(
-            os.path.getsize(
-                final_file
-            )
-        )
     )
 
     return {
@@ -823,7 +922,7 @@ def download_media(
 
 
 # =========================================================
-# FFMPEG COMPRESSION
+# COMPRESS VIDEO
 # =========================================================
 
 def compress_video(
@@ -832,7 +931,9 @@ def compress_video(
     progress_callback=None
 ):
 
-    if not os.path.isfile(input_file):
+    if not os.path.isfile(
+        input_file
+    ):
 
         raise FileNotFoundError(
             input_file
@@ -855,11 +956,35 @@ def compress_video(
     safe_progress(
         progress_callback,
         {
-            "stage": "compressing",
-            "percent": 0,
+            "stage":
+                "compressing",
+
+            "percent":
+                0,
+
             "message":
                 f"Compressing {original_mb:.2f} MB..."
         }
+    )
+
+    print()
+    print("=" * 70)
+    print("COMPRESSION STARTED")
+    print("=" * 70)
+
+    print(
+        "Input:",
+        input_file
+    )
+
+    print(
+        "Original:",
+        f"{original_mb:.2f} MB"
+    )
+
+    print(
+        "Target:",
+        f"{target_mb:.2f} MB"
     )
 
     # =====================================================
@@ -867,22 +992,31 @@ def compress_video(
     # =====================================================
 
     probe_command = [
+
         "ffprobe",
+
         "-v",
         "error",
+
         "-show_entries",
         "format=duration",
+
         "-of",
         "default=noprint_wrappers=1:nokey=1",
+
         input_file,
     ]
 
     try:
 
         probe = subprocess.run(
+
             probe_command,
+
             capture_output=True,
+
             text=True,
+
             errors="replace"
         )
 
@@ -890,7 +1024,12 @@ def compress_video(
             probe.stdout.strip()
         )
 
-    except Exception:
+    except Exception as error:
+
+        print(
+            "ffprobe error:",
+            error
+        )
 
         duration = 0
 
@@ -900,11 +1039,15 @@ def compress_video(
             "Could not determine video duration."
         )
 
+    print(
+        "Duration:",
+        f"{duration:.2f} seconds"
+    )
+
     # =====================================================
-    # TARGET BITRATE
+    # BITRATE CALCULATION
     # =====================================================
 
-    # Keep a safety margin.
     target_bytes = (
         target_mb *
         1024 *
@@ -916,14 +1059,14 @@ def compress_video(
         8
     )
 
-    # Audio bitrate.
-    audio_bitrate = 64000
-
-    # Reserve approximately 5% for MP4/container overhead.
+    # Reserve some room for MP4 container overhead.
     usable_bits = (
         target_bits *
-        0.95
+        0.93
     )
+
+    # Audio = 64 kbps.
+    audio_bitrate = 64000
 
     total_bitrate = (
         usable_bits /
@@ -935,23 +1078,15 @@ def compress_video(
         audio_bitrate
     )
 
+    # Avoid invalid/very tiny bitrate.
     video_bitrate = max(
         video_bitrate,
         100000
     )
 
     video_kbps = int(
-        video_bitrate / 1000
-    )
-
-    print(
-        "Duration:",
-        f"{duration:.2f} seconds"
-    )
-
-    print(
-        "Target size:",
-        f"{target_mb:.2f} MB"
+        video_bitrate /
+        1000
     )
 
     print(
@@ -991,13 +1126,17 @@ def compress_video(
         "aac",
 
         "-b:a",
-        f"{audio_bitrate // 1000}k",
+        "64k",
 
         "-movflags",
         "+faststart",
 
         output_file,
     ]
+
+    print(
+        "Running FFmpeg..."
+    )
 
     process = subprocess.Popen(
 
@@ -1014,6 +1153,10 @@ def compress_video(
         bufsize=1
     )
 
+    # =====================================================
+    # READ FFMPEG PROGRESS
+    # =====================================================
+
     while True:
 
         line = process.stderr.readline()
@@ -1028,55 +1171,62 @@ def compress_video(
 
         line = line.strip()
 
-        if "time=" in line:
+        if "time=" not in line:
 
-            try:
+            continue
 
-                time_part = (
-                    line
-                    .split("time=")[1]
-                    .split()[0]
-                )
+        try:
 
-                hours, minutes, seconds = (
-                    time_part.split(":")
-                )
+            time_part = (
+                line
+                .split("time=")[1]
+                .split()[0]
+            )
 
-                elapsed = (
-                    float(hours) * 3600
-                    +
-                    float(minutes) * 60
-                    +
-                    float(seconds)
-                )
+            hours, minutes, seconds = (
+                time_part.split(":")
+            )
 
-                percent = min(
-                    (
-                        elapsed /
-                        duration
-                    ) * 100,
-                    100
-                )
+            elapsed = (
+                float(hours) * 3600
+                +
+                float(minutes) * 60
+                +
+                float(seconds)
+            )
 
-                safe_progress(
-                    progress_callback,
-                    {
-                        "stage":
-                            "compressing",
+            percent = min(
 
-                        "percent":
-                            percent,
+                (
+                    elapsed /
+                    duration
+                ) * 100,
 
-                        "message":
-                            "Compressing video..."
-                    }
-                )
+                100
+            )
 
-            except Exception:
+            safe_progress(
+                progress_callback,
+                {
+                    "stage":
+                        "compressing",
 
-                pass
+                    "percent":
+                        percent,
+
+                    "message":
+                        "Compressing video..."
+                }
+            )
+
+        except Exception:
+            pass
 
     return_code = process.wait()
+
+    # =====================================================
+    # CHECK FFMPEG
+    # =====================================================
 
     if return_code != 0:
 
@@ -1084,9 +1234,12 @@ def compress_video(
             output_file
         ):
 
-            os.remove(
-                output_file
-            )
+            try:
+                os.remove(
+                    output_file
+                )
+            except Exception:
+                pass
 
         raise RuntimeError(
             "FFmpeg compression failed."
@@ -1097,7 +1250,8 @@ def compress_video(
     ):
 
         raise RuntimeError(
-            "Compressed video was not created."
+            "FFmpeg completed but "
+            "compressed video was not created."
         )
 
     compressed_size = os.path.getsize(
@@ -1110,9 +1264,9 @@ def compress_video(
     )
 
     print()
-    print("=" * 60)
+    print("=" * 70)
     print("COMPRESSION COMPLETE")
-    print("=" * 60)
+    print("=" * 70)
 
     print(
         "Original:",
@@ -1124,7 +1278,7 @@ def compress_video(
         f"{compressed_mb:.2f} MB"
     )
 
-    print("=" * 60)
+    print("=" * 70)
 
     safe_progress(
         progress_callback,
@@ -1152,9 +1306,12 @@ def compress_video(
 
 def delete_file(file_path):
 
+    if not file_path:
+        return
+
     try:
 
-        if file_path and os.path.exists(
+        if os.path.exists(
             file_path
         ):
 
@@ -1170,6 +1327,11 @@ def delete_file(file_path):
     except Exception as error:
 
         print(
-            "Delete error:",
+            "Could not delete file:",
+            file_path
+        )
+
+        print(
+            "Error:",
             error
         )
