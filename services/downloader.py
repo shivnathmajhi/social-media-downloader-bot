@@ -828,13 +828,11 @@ def download_media(
 
 def compress_video(
     input_file,
-    target_mb=47.0,
+    target_mb=44.0,
     progress_callback=None
 ):
 
-    if not os.path.isfile(
-        input_file
-    ):
+    if not os.path.isfile(input_file):
 
         raise FileNotFoundError(
             input_file
@@ -857,49 +855,34 @@ def compress_video(
     safe_progress(
         progress_callback,
         {
-            "stage":
-                "compressing",
-
-            "percent":
-                0,
-
+            "stage": "compressing",
+            "percent": 0,
             "message":
                 f"Compressing {original_mb:.2f} MB..."
         }
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # GET DURATION
-    # -----------------------------------------------------
-
-    duration = 0
+    # =====================================================
 
     probe_command = [
-
         "ffprobe",
-
         "-v",
         "error",
-
         "-show_entries",
         "format=duration",
-
         "-of",
         "default=noprint_wrappers=1:nokey=1",
-
         input_file,
     ]
 
     try:
 
         probe = subprocess.run(
-
             probe_command,
-
             capture_output=True,
-
             text=True,
-
             errors="replace"
         )
 
@@ -911,46 +894,74 @@ def compress_video(
 
         duration = 0
 
-    # -----------------------------------------------------
+    if duration <= 0:
+
+        raise RuntimeError(
+            "Could not determine video duration."
+        )
+
+    # =====================================================
     # TARGET BITRATE
-    # -----------------------------------------------------
+    # =====================================================
 
-    if duration > 0:
+    # Keep a safety margin.
+    target_bytes = (
+        target_mb *
+        1024 *
+        1024
+    )
 
-        target_bits = (
-            target_mb
-            *
-            1024
-            *
-            1024
-            *
-            8
-        )
+    target_bits = (
+        target_bytes *
+        8
+    )
 
-        audio_bitrate = 96000
+    # Audio bitrate.
+    audio_bitrate = 64000
 
-        video_bitrate = (
-            target_bits /
-            duration
-        ) - audio_bitrate
+    # Reserve approximately 5% for MP4/container overhead.
+    usable_bits = (
+        target_bits *
+        0.95
+    )
 
-        video_bitrate = max(
-            video_bitrate,
-            150000
-        )
+    total_bitrate = (
+        usable_bits /
+        duration
+    )
 
-        video_kbps = int(
-            video_bitrate /
-            1000
-        )
+    video_bitrate = (
+        total_bitrate -
+        audio_bitrate
+    )
 
-    else:
+    video_bitrate = max(
+        video_bitrate,
+        100000
+    )
 
-        video_kbps = 1000
+    video_kbps = int(
+        video_bitrate / 1000
+    )
 
-    # -----------------------------------------------------
+    print(
+        "Duration:",
+        f"{duration:.2f} seconds"
+    )
+
+    print(
+        "Target size:",
+        f"{target_mb:.2f} MB"
+    )
+
+    print(
+        "Video bitrate:",
+        f"{video_kbps} kbps"
+    )
+
+    # =====================================================
     # FFMPEG
-    # -----------------------------------------------------
+    # =====================================================
 
     command = [
 
@@ -980,7 +991,7 @@ def compress_video(
         "aac",
 
         "-b:a",
-        "96k",
+        f"{audio_bitrate // 1000}k",
 
         "-movflags",
         "+faststart",
@@ -1003,8 +1014,6 @@ def compress_video(
         bufsize=1
     )
 
-    current_percent = 0
-
     while True:
 
         line = process.stderr.readline()
@@ -1012,19 +1021,22 @@ def compress_video(
         if not line:
 
             if process.poll() is not None:
+
                 break
 
             continue
 
         line = line.strip()
 
-        if "time=" in line and duration > 0:
+        if "time=" in line:
 
             try:
 
-                time_part = line.split(
-                    "time="
-                )[1].split()[0]
+                time_part = (
+                    line
+                    .split("time=")[1]
+                    .split()[0]
+                )
 
                 hours, minutes, seconds = (
                     time_part.split(":")
@@ -1038,7 +1050,7 @@ def compress_video(
                     float(seconds)
                 )
 
-                current_percent = min(
+                percent = min(
                     (
                         elapsed /
                         duration
@@ -1053,7 +1065,7 @@ def compress_video(
                             "compressing",
 
                         "percent":
-                            current_percent,
+                            percent,
 
                         "message":
                             "Compressing video..."
@@ -1097,6 +1109,23 @@ def compress_video(
         (1024 * 1024)
     )
 
+    print()
+    print("=" * 60)
+    print("COMPRESSION COMPLETE")
+    print("=" * 60)
+
+    print(
+        "Original:",
+        f"{original_mb:.2f} MB"
+    )
+
+    print(
+        "Compressed:",
+        f"{compressed_mb:.2f} MB"
+    )
+
+    print("=" * 60)
+
     safe_progress(
         progress_callback,
         {
@@ -1112,16 +1141,6 @@ def compress_video(
                     f"{compressed_mb:.2f} MB"
                 )
         }
-    )
-
-    print(
-        "Original size:",
-        f"{original_mb:.2f} MB"
-    )
-
-    print(
-        "Compressed size:",
-        f"{compressed_mb:.2f} MB"
     )
 
     return output_file

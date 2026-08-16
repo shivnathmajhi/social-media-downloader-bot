@@ -22,6 +22,7 @@ from telegram.ext import (
 from services.downloader import (
     download_media,
     get_available_qualities,
+    compress_video,
 )
 
 
@@ -54,7 +55,13 @@ VIDEO_EXTENSIONS = {
     ".m4v",
 }
 
+# Telegram safety limit for this bot.
+# We deliberately use 48 MB rather than pushing the limit.
 MAX_UPLOAD_MB = 48.0
+
+# Compression target.
+# 44 MB gives us a safety margin.
+COMPRESSION_TARGET_MB = 44.0
 
 
 # =========================================================
@@ -149,16 +156,12 @@ def back_button():
 
 
 # =========================================================
-# DYNAMIC QUALITY KEYBOARD
+# QUALITY KEYBOARD
 # =========================================================
 
 def quality_keyboard(qualities):
 
     keyboard = []
-
-    # -----------------------------------------------------
-    # Numeric qualities
-    # -----------------------------------------------------
 
     numeric = []
 
@@ -174,22 +177,16 @@ def quality_keyboard(qualities):
         except Exception:
             pass
 
-    # Remove duplicates
     numeric = list(
         dict.fromkeys(numeric)
     )
 
-    # Sort numerically
     try:
         numeric.sort(
             key=lambda x: int(x)
         )
     except Exception:
         pass
-
-    # -----------------------------------------------------
-    # Create buttons 2 per row
-    # -----------------------------------------------------
 
     row = []
 
@@ -216,10 +213,6 @@ def quality_keyboard(qualities):
     if row:
         keyboard.append(row)
 
-    # -----------------------------------------------------
-    # Best Available
-    # -----------------------------------------------------
-
     if "best" in qualities:
 
         keyboard.append(
@@ -230,10 +223,6 @@ def quality_keyboard(qualities):
                 )
             ]
         )
-
-    # -----------------------------------------------------
-    # Back
-    # -----------------------------------------------------
 
     keyboard.append(
         [
@@ -317,10 +306,6 @@ async def platform_selected(
         platform
     )
 
-    # -----------------------------------------------------
-    # ENABLED PLATFORMS
-    # -----------------------------------------------------
-
     if platform in {
         "youtube",
         "tiktok",
@@ -336,10 +321,6 @@ async def platform_selected(
         )
 
         return
-
-    # -----------------------------------------------------
-    # NOT ENABLED
-    # -----------------------------------------------------
 
     await query.edit_message_text(
 
@@ -369,10 +350,6 @@ async def handle_url(
         "platform"
     )
 
-    # -----------------------------------------------------
-    # NO PLATFORM
-    # -----------------------------------------------------
-
     if not platform:
 
         await update.message.reply_text(
@@ -383,10 +360,6 @@ async def handle_url(
         )
 
         return
-
-    # -----------------------------------------------------
-    # URL VALIDATION
-    # -----------------------------------------------------
 
     if not (
         url.startswith("http://")
@@ -404,10 +377,6 @@ async def handle_url(
 
         return
 
-    # -----------------------------------------------------
-    # ENABLED PLATFORMS
-    # -----------------------------------------------------
-
     if platform not in {
         "youtube",
         "tiktok",
@@ -423,15 +392,7 @@ async def handle_url(
 
         return
 
-    # -----------------------------------------------------
-    # SAVE URL
-    # -----------------------------------------------------
-
     context.user_data["url"] = url
-
-    # -----------------------------------------------------
-    # FETCH AVAILABLE QUALITIES
-    # -----------------------------------------------------
 
     status_message = await update.message.reply_text(
 
@@ -442,8 +403,11 @@ async def handle_url(
     try:
 
         info = await asyncio.to_thread(
+
             get_available_qualities,
+
             url,
+
             platform
         )
 
@@ -457,27 +421,15 @@ async def handle_url(
             "Video"
         )
 
-        # -------------------------------------------------
-        # Validate qualities
-        # -------------------------------------------------
-
         if not qualities:
 
             raise RuntimeError(
                 "No downloadable video qualities were found."
             )
 
-        # -------------------------------------------------
-        # Save information
-        # -------------------------------------------------
-
         context.user_data["qualities"] = qualities
 
         context.user_data["title"] = title
-
-        # -------------------------------------------------
-        # Display quality menu
-        # -------------------------------------------------
 
         await status_message.edit_text(
 
@@ -541,10 +493,6 @@ async def quality_selected(
         []
     )
 
-    # -----------------------------------------------------
-    # URL CHECK
-    # -----------------------------------------------------
-
     if not url:
 
         await query.edit_message_text(
@@ -556,10 +504,6 @@ async def quality_selected(
         )
 
         return
-
-    # -----------------------------------------------------
-    # PLATFORM CHECK
-    # -----------------------------------------------------
 
     if platform not in {
         "youtube",
@@ -575,10 +519,6 @@ async def quality_selected(
         )
 
         return
-
-    # -----------------------------------------------------
-    # QUALITY CHECK
-    # -----------------------------------------------------
 
     if quality != "best":
 
@@ -597,10 +537,6 @@ async def quality_selected(
 
             return
 
-    # -----------------------------------------------------
-    # QUALITY NAME
-    # -----------------------------------------------------
-
     quality_name = QUALITY_NAMES.get(
         quality,
         f"{quality}p"
@@ -611,10 +547,6 @@ async def quality_selected(
         platform
     )
 
-    # -----------------------------------------------------
-    # STATUS
-    # -----------------------------------------------------
-
     await query.edit_message_text(
 
         "⏳ Starting download...\n\n"
@@ -624,6 +556,7 @@ async def quality_selected(
     )
 
     file_path = None
+    compressed_path = None
 
     try:
 
@@ -664,19 +597,11 @@ async def quality_selected(
             platform
         )
 
-        # -------------------------------------------------
-        # RESULT CHECK
-        # -------------------------------------------------
-
         if not result:
 
             raise RuntimeError(
                 "Downloader returned no result."
             )
-
-        # -------------------------------------------------
-        # FILE
-        # -------------------------------------------------
 
         file_path = result.get(
             "file"
@@ -703,7 +628,7 @@ async def quality_selected(
             )
 
         # =================================================
-        # SIZE
+        # ORIGINAL SIZE
         # =================================================
 
         file_size = os.path.getsize(
@@ -730,34 +655,234 @@ async def quality_selected(
         )
 
         print(
-            "Size:",
+            "Original size:",
             f"{file_size_mb:.2f} MB"
         )
 
+        print("=" * 60)
+
         # =================================================
-        # 48 MB WARNING
+        # AUTOMATIC COMPRESSION
         # =================================================
 
-        if file_size_mb > MAX_UPLOAD_MB:
+        if (
+            extension in VIDEO_EXTENSIONS
+            and
+            file_size_mb > MAX_UPLOAD_MB
+        ):
 
             await query.edit_message_text(
 
-                "⚠️ Video is larger than "
-                f"{MAX_UPLOAD_MB:.0f} MB.\n\n"
+                "📦 Video is too large for Telegram.\n\n"
 
-                f"📦 Current size: "
-                f"{file_size_mb:.2f} MB\n\n"
+                f"Original size: "
+                f"{file_size_mb:.2f} MB\n"
 
-                "Automatic compression will be handled "
-                "by your downloader/compression system."
+                f"Target size: "
+                f"{COMPRESSION_TARGET_MB:.0f} MB\n\n"
+
+                "🗜️ Automatically compressing...\n"
+                "Please wait."
+            )
+
+            print()
+            print("=" * 60)
+            print("AUTOMATIC COMPRESSION")
+            print("=" * 60)
+
+            compressed_path = await asyncio.to_thread(
+
+                compress_video,
+
+                file_path,
+
+                COMPRESSION_TARGET_MB
+            )
+
+            if not compressed_path:
+
+                raise RuntimeError(
+                    "Compression returned no file."
+                )
+
+            if not os.path.exists(
+                compressed_path
+            ):
+
+                raise FileNotFoundError(
+                    "Compressed file was not created."
+                )
+
+            compressed_size = os.path.getsize(
+                compressed_path
+            )
+
+            compressed_mb = (
+                compressed_size /
+                (1024 * 1024)
+            )
+
+            print(
+                "Compressed size:",
+                f"{compressed_mb:.2f} MB"
+            )
+
+            # =================================================
+            # SECOND COMPRESSION IF NECESSARY
+            # =================================================
+
+            if compressed_mb > MAX_UPLOAD_MB:
+
+                print(
+                    "First compression was still too large."
+                )
+
+                await query.edit_message_text(
+
+                    "🗜️ First compression wasn't enough.\n\n"
+
+                    f"Current size: "
+                    f"{compressed_mb:.2f} MB\n\n"
+
+                    "🔄 Applying stronger compression..."
+                )
+
+                second_compressed_path = (
+                    await asyncio.to_thread(
+
+                        compress_video,
+
+                        compressed_path,
+
+                        40.0
+                    )
+                )
+
+                if second_compressed_path:
+
+                    if os.path.exists(
+                        compressed_path
+                    ):
+
+                        try:
+
+                            os.remove(
+                                compressed_path
+                            )
+
+                        except Exception:
+                            pass
+
+                    compressed_path = (
+                        second_compressed_path
+                    )
+
+                    compressed_size = os.path.getsize(
+                        compressed_path
+                    )
+
+                    compressed_mb = (
+                        compressed_size /
+                        (1024 * 1024)
+                    )
+
+                    print(
+                        "Second compression size:",
+                        f"{compressed_mb:.2f} MB"
+                    )
+
+            # =================================================
+            # FINAL SIZE CHECK
+            # =================================================
+
+            if compressed_mb > MAX_UPLOAD_MB:
+
+                raise RuntimeError(
+
+                    "The video could not be compressed "
+                    f"below {MAX_UPLOAD_MB:.0f} MB.\n\n"
+
+                    f"Final size: "
+                    f"{compressed_mb:.2f} MB\n\n"
+
+                    "Please select a lower video quality "
+                    "and try again."
+                )
+
+            # =================================================
+            # IMPORTANT:
+            # SEND COMPRESSED FILE
+            # =================================================
+
+            file_path = compressed_path
+
+            extension = ".mp4"
+
+            print(
+                "Using compressed file:",
+                file_path
+            )
+
+            await query.edit_message_text(
+
+                "✅ Compression complete!\n\n"
+
+                f"📦 Final size: "
+                f"{compressed_mb:.2f} MB\n\n"
+
+                "📤 Sending video to Telegram..."
             )
 
         else:
 
+            # =================================================
+            # ORIGINAL FILE IS SMALL ENOUGH
+            # =================================================
+
             await query.edit_message_text(
 
                 "📤 Sending video to Telegram...\n\n"
-                f"📦 Size: {file_size_mb:.2f} MB"
+
+                f"📦 Size: "
+                f"{file_size_mb:.2f} MB"
+            )
+
+        # =================================================
+        # FINAL SAFETY CHECK
+        # =================================================
+
+        final_size = os.path.getsize(
+            file_path
+        )
+
+        final_size_mb = (
+            final_size /
+            (1024 * 1024)
+        )
+
+        print()
+        print("=" * 60)
+        print("FINAL UPLOAD CHECK")
+        print("=" * 60)
+
+        print(
+            "File:",
+            file_path
+        )
+
+        print(
+            "Final size:",
+            f"{final_size_mb:.2f} MB"
+        )
+
+        if final_size_mb > MAX_UPLOAD_MB:
+
+            raise RuntimeError(
+
+                "Upload cancelled because the final "
+                f"file is {final_size_mb:.2f} MB, "
+                f"which exceeds the safe "
+                f"{MAX_UPLOAD_MB:.0f} MB limit."
             )
 
         # =================================================
@@ -770,14 +895,6 @@ async def quality_selected(
                 file_path,
                 "rb"
             ) as video:
-
-                # IMPORTANT:
-                # No caption.
-                # No progress_callback.
-                #
-                # Your previous error was:
-                # reply_video() got an unexpected
-                # keyword argument 'progress_callback'
 
                 await query.message.reply_video(
 
@@ -907,20 +1024,35 @@ async def quality_selected(
 
     finally:
 
+        files_to_delete = set()
+
         if file_path:
+
+            files_to_delete.add(
+                file_path
+            )
+
+        if compressed_path:
+
+            files_to_delete.add(
+                compressed_path
+            )
+
+        for path in files_to_delete:
 
             try:
 
                 if os.path.exists(
-                    file_path
+                    path
                 ):
 
                     os.remove(
-                        file_path
+                        path
                     )
 
                     print(
-                        "Temporary file deleted."
+                        "Temporary file deleted:",
+                        path
                     )
 
             except Exception as cleanup_error:
@@ -950,6 +1082,11 @@ def main():
     print(
         "Telegram safe upload size:",
         f"{MAX_UPLOAD_MB:.2f} MB"
+    )
+
+    print(
+        "Compression target:",
+        f"{COMPRESSION_TARGET_MB:.2f} MB"
     )
 
     print("=" * 70)
@@ -1001,9 +1138,7 @@ def main():
     application.add_handler(
 
         CallbackQueryHandler(
-
             back_to_menu,
-
             pattern="^back_to_menu$"
         )
     )
@@ -1026,10 +1161,6 @@ def main():
 
     # =====================================================
     # QUALITY
-    #
-    # Supports dynamic qualities:
-    # 144, 240, 360, 480, 540,
-    # 720, 1080, 1440, 2160, best
     # =====================================================
 
     application.add_handler(
@@ -1072,7 +1203,6 @@ def main():
     print()
 
     application.run_polling(
-
         drop_pending_updates=True
     )
 
