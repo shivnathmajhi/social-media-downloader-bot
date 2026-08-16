@@ -1,11 +1,12 @@
 FROM python:3.12-slim
 
-# Install FFmpeg, ffprobe and required system tools
+# Install system dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
         curl \
         ca-certificates \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Deno
@@ -16,14 +17,14 @@ ENV PATH=/root/.deno/bin:$PATH
 
 WORKDIR /app
 
-# Install Python dependencies first for better Docker caching
+# Install Python dependencies
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -U pip \
+RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Copy project
+# Copy application
 COPY . .
 
-# Start Telegram bot
+# Start bot
 CMD ["python", "bot.py"]
