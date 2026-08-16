@@ -927,111 +927,158 @@ def download_media(
 
 def compress_video(
     input_file,
-    target_mb=44.0,
+    target_mb=42.0,
     progress_callback=None
 ):
+    """
+    Compress a video to approximately target_mb.
 
-    if not os.path.isfile(
-        input_file
-    ):
+    Designed for Telegram uploads.
+    """
 
+    if not os.path.isfile(input_file):
         raise FileNotFoundError(
-            input_file
+            f"Input video not found: {input_file}"
         )
-
-    original_size = os.path.getsize(
-        input_file
-    )
-
-    original_mb = (
-        original_size /
-        (1024 * 1024)
-    )
 
     output_file = os.path.join(
         TEMP_DIR,
         f"compressed_{uuid.uuid4().hex}.mp4"
     )
 
-    safe_progress(
-        progress_callback,
-        {
-            "stage":
-                "compressing",
+    original_size = os.path.getsize(input_file)
 
-            "percent":
-                0,
-
-            "message":
-                f"Compressing {original_mb:.2f} MB..."
-        }
+    original_mb = (
+        original_size / (1024 * 1024)
     )
 
     print()
     print("=" * 70)
-    print("COMPRESSION STARTED")
+    print("FFMPEG COMPRESSION")
     print("=" * 70)
 
+    print("Input:", input_file)
     print(
-        "Input:",
-        input_file
-    )
-
-    print(
-        "Original:",
+        "Original size:",
         f"{original_mb:.2f} MB"
     )
-
     print(
-        "Target:",
+        "Target size:",
         f"{target_mb:.2f} MB"
     )
 
     # =====================================================
-    # GET DURATION
+    # GET VIDEO INFORMATION
     # =====================================================
 
     probe_command = [
-
         "ffprobe",
-
         "-v",
         "error",
-
+        "-select_streams",
+        "v:0",
         "-show_entries",
-        "format=duration",
-
+        "stream=width,height,duration",
         "-of",
-        "default=noprint_wrappers=1:nokey=1",
-
-        input_file,
+        "json",
+        input_file
     ]
 
     try:
 
         probe = subprocess.run(
-
             probe_command,
-
-            capture_output=True,
-
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
+            timeout=60
+        )
 
-            errors="replace"
+        if probe.returncode != 0:
+            raise RuntimeError(
+                probe.stderr
+            )
+
+        import json
+
+        probe_data = json.loads(
+            probe.stdout
+        )
+
+        streams = probe_data.get(
+            "streams",
+            []
+        )
+
+        if not streams:
+            raise RuntimeError(
+                "FFprobe could not find a video stream."
+            )
+
+        video_stream = streams[0]
+
+        width = int(
+            video_stream.get(
+                "width",
+                1280
+            )
+        )
+
+        height = int(
+            video_stream.get(
+                "height",
+                720
+            )
         )
 
         duration = float(
-            probe.stdout.strip()
+            video_stream.get(
+                "duration",
+                0
+            )
+            or 0
         )
 
     except Exception as error:
 
         print(
-            "ffprobe error:",
+            "FFprobe error:",
             error
         )
 
-        duration = 0
+        raise RuntimeError(
+            f"Could not read video information: {error}"
+        )
+
+    if duration <= 0:
+
+        # Try format-level duration
+        probe_command = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            input_file
+        ]
+
+        probe = subprocess.run(
+            probe_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace"
+        )
+
+        try:
+            duration = float(
+                probe.stdout.strip()
+            )
+        except Exception:
+            duration = 0
 
     if duration <= 0:
 
@@ -1040,12 +1087,17 @@ def compress_video(
         )
 
     print(
+        "Resolution:",
+        f"{width}x{height}"
+    )
+
+    print(
         "Duration:",
         f"{duration:.2f} seconds"
     )
 
     # =====================================================
-    # BITRATE CALCULATION
+    # CALCULATE BITRATE
     # =====================================================
 
     target_bytes = (
@@ -1055,57 +1107,110 @@ def compress_video(
     )
 
     target_bits = (
-        target_bytes *
-        8
+        target_bytes * 8
     )
 
-    # Reserve some room for MP4 container overhead.
+    # Reserve audio bitrate.
+    audio_kbps = 64
+
+    # Reserve container overhead.
     usable_bits = (
-        target_bits *
-        0.93
+        target_bits * 0.90
     )
 
-    # Audio = 64 kbps.
-    audio_bitrate = 64000
-
-    total_bitrate = (
+    total_kbps = (
         usable_bits /
-        duration
-    )
-
-    video_bitrate = (
-        total_bitrate -
-        audio_bitrate
-    )
-
-    # Avoid invalid/very tiny bitrate.
-    video_bitrate = max(
-        video_bitrate,
-        100000
-    )
-
-    video_kbps = int(
-        video_bitrate /
+        duration /
         1000
     )
 
+    video_kbps = int(
+        total_kbps - audio_kbps
+    )
+
+    # Prevent unusably low bitrate.
+    video_kbps = max(
+        video_kbps,
+        150
+    )
+
     print(
-        "Video bitrate:",
+        "Calculated video bitrate:",
         f"{video_kbps} kbps"
     )
 
     # =====================================================
-    # FFMPEG
+    # RESOLUTION CONTROL
+    # =====================================================
+
+    # Extremely large videos are unnecessarily expensive
+    # to encode and may consume too much RAM/CPU.
+    #
+    # Keep 1080p videos at 1080p.
+    # Reduce 1440p/4K videos.
+    # For extremely low bitrates, reduce resolution.
+
+    if width >= 3840:
+
+        scale_filter = (
+            "scale=-2:1080"
+        )
+
+    elif width >= 2560:
+
+        scale_filter = (
+            "scale=-2:1080"
+        )
+
+    elif video_kbps < 700 and height > 720:
+
+        scale_filter = (
+            "scale=-2:720"
+        )
+
+    elif video_kbps < 450 and height > 480:
+
+        scale_filter = (
+            "scale=-2:480"
+        )
+
+    elif video_kbps < 300 and height > 360:
+
+        scale_filter = (
+            "scale=-2:360"
+        )
+
+    else:
+
+        scale_filter = (
+            "scale='min(1920,iw)':-2"
+        )
+
+    print(
+        "Scale filter:",
+        scale_filter
+    )
+
+    # =====================================================
+    # FFMPEG COMMAND
     # =====================================================
 
     command = [
-
         "ffmpeg",
 
         "-y",
 
+        "-hide_banner",
+
+        "-loglevel",
+        "warning",
+
         "-i",
         input_file,
+
+        # VIDEO
+        "-vf",
+        scale_filter,
 
         "-c:v",
         "libx264",
@@ -1122,117 +1227,86 @@ def compress_video(
         "-bufsize",
         f"{video_kbps * 2}k",
 
+        "-pix_fmt",
+        "yuv420p",
+
+        # AUDIO
         "-c:a",
         "aac",
 
         "-b:a",
-        "64k",
+        f"{audio_kbps}k",
 
+        "-ac",
+        "2",
+
+        # MP4
         "-movflags",
         "+faststart",
 
-        output_file,
+        output_file
     ]
 
+    print()
     print(
         "Running FFmpeg..."
     )
 
-    process = subprocess.Popen(
-
-        command,
-
-        stdout=subprocess.DEVNULL,
-
-        stderr=subprocess.PIPE,
-
-        text=True,
-
-        errors="replace",
-
-        bufsize=1
+    print(
+        "Command:",
+        " ".join(command)
     )
 
     # =====================================================
-    # READ FFMPEG PROGRESS
+    # RUN FFMPEG
     # =====================================================
 
-    while True:
+    try:
 
-        line = process.stderr.readline()
+        process = subprocess.Popen(
 
-        if not line:
+            command,
 
-            if process.poll() is not None:
+            stdout=subprocess.PIPE,
 
-                break
+            stderr=subprocess.PIPE,
 
-            continue
+            text=True,
 
-        line = line.strip()
+            errors="replace",
 
-        if "time=" not in line:
+            bufsize=1
+        )
 
-            continue
+        stdout, stderr = process.communicate()
 
-        try:
+    except Exception as error:
 
-            time_part = (
-                line
-                .split("time=")[1]
-                .split()[0]
-            )
+        print(
+            "FFmpeg process error:",
+            error
+        )
 
-            hours, minutes, seconds = (
-                time_part.split(":")
-            )
-
-            elapsed = (
-                float(hours) * 3600
-                +
-                float(minutes) * 60
-                +
-                float(seconds)
-            )
-
-            percent = min(
-
-                (
-                    elapsed /
-                    duration
-                ) * 100,
-
-                100
-            )
-
-            safe_progress(
-                progress_callback,
-                {
-                    "stage":
-                        "compressing",
-
-                    "percent":
-                        percent,
-
-                    "message":
-                        "Compressing video..."
-                }
-            )
-
-        except Exception:
-            pass
-
-    return_code = process.wait()
+        raise RuntimeError(
+            f"Could not start FFmpeg: {error}"
+        )
 
     # =====================================================
-    # CHECK FFMPEG
+    # CHECK RESULT
     # =====================================================
 
-    if return_code != 0:
+    if process.returncode != 0:
 
-        if os.path.exists(
-            output_file
-        ):
+        print()
+        print("=" * 70)
+        print("FFMPEG ERROR")
+        print("=" * 70)
+
+        print(stderr[-8000:])
+
+        print("=" * 70)
+
+        if os.path.exists(output_file):
 
             try:
                 os.remove(
@@ -1242,16 +1316,21 @@ def compress_video(
                 pass
 
         raise RuntimeError(
-            "FFmpeg compression failed."
+            "FFmpeg compression failed.\n\n"
+            + stderr[-4000:]
         )
+
+    # =====================================================
+    # VERIFY OUTPUT
+    # =====================================================
 
     if not os.path.isfile(
         output_file
     ):
 
         raise RuntimeError(
-            "FFmpeg completed but "
-            "compressed video was not created."
+            "FFmpeg finished but "
+            "no output file was created."
         )
 
     compressed_size = os.path.getsize(
@@ -1265,7 +1344,7 @@ def compress_video(
 
     print()
     print("=" * 70)
-    print("COMPRESSION COMPLETE")
+    print("FFMPEG COMPRESSION COMPLETE")
     print("=" * 70)
 
     print(
@@ -1291,11 +1370,189 @@ def compress_video(
 
             "message":
                 (
-                    f"Compression complete: "
+                    "Compression complete: "
                     f"{compressed_mb:.2f} MB"
                 )
         }
     )
+
+    # =====================================================
+    # IF STILL TOO LARGE
+    # =====================================================
+
+    if compressed_mb > 48:
+
+        print(
+            "Compressed file is still above "
+            "Telegram safe limit."
+        )
+
+        # Remove first result.
+        try:
+
+            os.remove(
+                output_file
+            )
+
+        except Exception:
+            pass
+
+        # Use stronger settings.
+        output_file_2 = os.path.join(
+            TEMP_DIR,
+            f"compressed_strong_{uuid.uuid4().hex}.mp4"
+        )
+
+        stronger_kbps = max(
+            120,
+            int(
+                video_kbps * 0.65
+            )
+        )
+
+        print(
+            "Retry bitrate:",
+            f"{stronger_kbps} kbps"
+        )
+
+        command_2 = [
+
+            "ffmpeg",
+
+            "-y",
+
+            "-hide_banner",
+
+            "-loglevel",
+            "warning",
+
+            "-i",
+            input_file,
+
+            "-vf",
+            "scale='min(1280,iw)':-2",
+
+            "-c:v",
+            "libx264",
+
+            "-preset",
+            "veryfast",
+
+            "-b:v",
+            f"{stronger_kbps}k",
+
+            "-maxrate",
+            f"{stronger_kbps}k",
+
+            "-bufsize",
+            f"{stronger_kbps * 2}k",
+
+            "-pix_fmt",
+            "yuv420p",
+
+            "-c:a",
+            "aac",
+
+            "-b:a",
+            "48k",
+
+            "-ac",
+            "2",
+
+            "-movflags",
+            "+faststart",
+
+            output_file_2
+        ]
+
+        process_2 = subprocess.Popen(
+
+            command_2,
+
+            stdout=subprocess.PIPE,
+
+            stderr=subprocess.PIPE,
+
+            text=True,
+
+            errors="replace"
+        )
+
+        stdout_2, stderr_2 = (
+            process_2.communicate()
+        )
+
+        if process_2.returncode != 0:
+
+            print(
+                stderr_2[-8000:]
+            )
+
+            if os.path.exists(
+                output_file_2
+            ):
+
+                try:
+                    os.remove(
+                        output_file_2
+                    )
+                except Exception:
+                    pass
+
+            raise RuntimeError(
+                "FFmpeg second compression attempt failed.\n\n"
+                + stderr_2[-4000:]
+            )
+
+        if not os.path.isfile(
+            output_file_2
+        ):
+
+            raise RuntimeError(
+                "Second FFmpeg compression "
+                "did not create an output file."
+            )
+
+        compressed_size = os.path.getsize(
+            output_file_2
+        )
+
+        compressed_mb = (
+            compressed_size /
+            (1024 * 1024)
+        )
+
+        output_file = output_file_2
+
+        print(
+            "Second compression:",
+            f"{compressed_mb:.2f} MB"
+        )
+
+    # =====================================================
+    # FINAL CHECK
+    # =====================================================
+
+    if compressed_mb > 48:
+
+        try:
+
+            os.remove(
+                output_file
+            )
+
+        except Exception:
+            pass
+
+        raise RuntimeError(
+
+            "Video is still too large after compression.\n\n"
+
+            f"Final size: {compressed_mb:.2f} MB\n"
+
+            "Please select a lower quality such as "
+            "360p or 480p."
+        )
 
     return output_file
 
