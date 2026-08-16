@@ -2,7 +2,10 @@ import os
 import sys
 import uuid
 import glob
+import json
+import shutil
 import subprocess
+from pathlib import Path
 
 import yt_dlp
 
@@ -13,7 +16,10 @@ import yt_dlp
 
 TEMP_DIR = "temp"
 
-os.makedirs(TEMP_DIR, exist_ok=True)
+os.makedirs(
+    TEMP_DIR,
+    exist_ok=True
+)
 
 
 # =========================================================
@@ -21,32 +27,90 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # =========================================================
 
 QUALITY_FORMATS = {
-    "144": "bestvideo[height<=144]+bestaudio/best[height<=144]/best",
-    "240": "bestvideo[height<=240]+bestaudio/best[height<=240]/best",
-    "360": "bestvideo[height<=360]+bestaudio/best[height<=360]/best",
-    "480": "bestvideo[height<=480]+bestaudio/best[height<=480]/best",
-    "540": "bestvideo[height<=540]+bestaudio/best[height<=540]/best",
-    "720": "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
-    "1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-    "1440": "bestvideo[height<=1440]+bestaudio/best[height<=1440]/best",
-    "2160": "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best",
-    "best": "bestvideo+bestaudio/best",
+    "144":
+        "bestvideo[height<=144]+bestaudio/"
+        "best[height<=144]/best",
+
+    "240":
+        "bestvideo[height<=240]+bestaudio/"
+        "best[height<=240]/best",
+
+    "360":
+        "bestvideo[height<=360]+bestaudio/"
+        "best[height<=360]/best",
+
+    "480":
+        "bestvideo[height<=480]+bestaudio/"
+        "best[height<=480]/best",
+
+    "540":
+        "bestvideo[height<=540]+bestaudio/"
+        "best[height<=540]/best",
+
+    "720":
+        "bestvideo[height<=720]+bestaudio/"
+        "best[height<=720]/best",
+
+    "1080":
+        "bestvideo[height<=1080]+bestaudio/"
+        "best[height<=1080]/best",
+
+    "1440":
+        "bestvideo[height<=1440]+bestaudio/"
+        "best[height<=1440]/best",
+
+    "2160":
+        "bestvideo[height<=2160]+bestaudio/"
+        "best[height<=2160]/best",
+
+    "best":
+        "bestvideo+bestaudio/best",
 }
 
 
 # =========================================================
-# PROGRESS CALLBACK
+# TELEGRAM SAFE SIZE
 # =========================================================
 
-def safe_progress(progress_callback, data):
+MAX_UPLOAD_MB = 48.0
+
+COMPRESSION_TARGET_MB = 42.0
+
+
+# =========================================================
+# VIDEO EXTENSIONS
+# =========================================================
+
+VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".mkv",
+    ".webm",
+    ".mov",
+    ".avi",
+    ".m4v",
+}
+
+
+# =========================================================
+# PROGRESS
+# =========================================================
+
+def safe_progress(
+    progress_callback,
+    data
+):
 
     if progress_callback is None:
         return
 
     try:
-        progress_callback(data)
+
+        progress_callback(
+            data
+        )
 
     except Exception as error:
+
         print(
             "Progress callback error:",
             error
@@ -57,12 +121,18 @@ def safe_progress(progress_callback, data):
 # FORMAT BYTES
 # =========================================================
 
-def format_bytes(value):
+def format_bytes(
+    value
+):
 
     try:
-        value = float(value)
+
+        value = float(
+            value
+        )
 
     except Exception:
+
         return "0 B"
 
     units = [
@@ -76,26 +146,37 @@ def format_bytes(value):
     for unit in units:
 
         if value < 1024:
-            return f"{value:.2f} {unit}"
+
+            return (
+                f"{value:.2f} {unit}"
+            )
 
         value /= 1024
 
-    return f"{value:.2f} PB"
+    return (
+        f"{value:.2f} PB"
+    )
 
 
 # =========================================================
 # FORMAT ETA
 # =========================================================
 
-def format_eta(seconds):
+def format_eta(
+    seconds
+):
 
     if seconds is None:
         return "--"
 
     try:
-        seconds = int(float(seconds))
+
+        seconds = int(
+            float(seconds)
+        )
 
     except Exception:
+
         return "--"
 
     if seconds < 0:
@@ -112,6 +193,7 @@ def format_eta(seconds):
     )
 
     if hours:
+
         return (
             f"{hours}h "
             f"{minutes}m "
@@ -119,117 +201,137 @@ def format_eta(seconds):
         )
 
     if minutes:
+
         return (
             f"{minutes}m "
             f"{seconds}s"
         )
 
-    return f"{seconds}s"
+    return (
+        f"{seconds}s"
+    )
 
 
 # =========================================================
-# YOUTUBE COOKIES
+# CHECK PROGRAM
 # =========================================================
 
-def add_youtube_options(options):
+def check_program(
+    program
+):
 
-    """
-    Add YouTube cookie file if configured.
+    path = shutil.which(
+        program
+    )
 
-    Railway environment variable:
+    if not path:
 
-        YOUTUBE_COOKIES_FILE=/app/cookies/youtube.txt
+        raise RuntimeError(
+            f"{program} is not installed "
+            "or is not available in PATH."
+        )
 
-    Never commit the cookie file to GitHub.
-    """
+    return path
+
+
+# =========================================================
+# YOUTUBE OPTIONS
+# =========================================================
+
+def add_youtube_options(
+    options
+):
+
+    # -----------------------------------------------------
+    # DENO
+    # -----------------------------------------------------
+
+    deno_path = shutil.which(
+        "deno"
+    )
+
+    if deno_path:
+
+        print(
+            "Deno found:",
+            deno_path
+        )
+
+        # IMPORTANT:
+        # Current yt-dlp expects:
+        #
+        # {
+        #     "deno": {}
+        # }
+
+        options[
+            "js_runtimes"
+        ] = {
+            "deno": {}
+        }
+
+        options[
+            "remote_components"
+        ] = [
+            "ejs:npm"
+        ]
+
+    else:
+
+        print(
+            "WARNING: Deno not found."
+        )
+
+    # -----------------------------------------------------
+    # COOKIES
+    # -----------------------------------------------------
 
     cookies_file = os.getenv(
         "YOUTUBE_COOKIES_FILE",
         ""
     ).strip()
 
-    if not cookies_file:
+    if cookies_file:
 
-        print(
-            "YouTube cookies: not configured"
-        )
-
-        return
-
-    cookies_file = os.path.abspath(
-        cookies_file
-    )
-
-    if os.path.isfile(
-        cookies_file
-    ):
-
-        options["cookiefile"] = (
+        cookies_file = os.path.abspath(
             cookies_file
         )
 
-        print(
-            "YouTube cookies: enabled"
-        )
-
-    else:
-
-        print(
-            "WARNING: YouTube cookie file "
-            "does not exist:"
-        )
-
-        print(
+        if os.path.isfile(
             cookies_file
-        )
+        ):
 
+            options[
+                "cookiefile"
+            ] = cookies_file
 
-# =========================================================
-# COMMON YOUTUBE OPTIONS
-# =========================================================
+            print(
+                "YouTube cookies enabled."
+            )
 
-def add_common_youtube_options(options):
+        else:
 
-    """
-    Current yt-dlp YouTube configuration.
+            print(
+                "WARNING: YouTube cookie file "
+                "does not exist:"
+            )
 
-    IMPORTANT:
-    js_runtimes must be a dictionary whose values
-    are dictionaries.
-    """
-
-    # -----------------------------------------------------
-    # DENO
-    # -----------------------------------------------------
-
-    options["js_runtimes"] = {
-        "deno": {}
-    }
-
-    # -----------------------------------------------------
-    # EJS
-    # -----------------------------------------------------
-
-    options["remote_components"] = [
-        "ejs:npm"
-    ]
-
-    # -----------------------------------------------------
-    # YOUTUBE COOKIES
-    # -----------------------------------------------------
-
-    add_youtube_options(
-        options
-    )
+            print(
+                cookies_file
+            )
 
 
 # =========================================================
 # FACEBOOK OPTIONS
 # =========================================================
 
-def add_facebook_options(options):
+def add_facebook_options(
+    options
+):
 
-    options["http_headers"] = {
+    options[
+        "http_headers"
+    ] = {
 
         "User-Agent":
             "Mozilla/5.0 "
@@ -259,13 +361,13 @@ def add_facebook_options(options):
         cookies_file
     ):
 
-        options["cookiefile"] = (
-            cookies_file
-        )
+        options[
+            "cookiefile"
+        ] = cookies_file
 
 
 # =========================================================
-# GET AVAILABLE QUALITIES
+# AVAILABLE QUALITIES
 # =========================================================
 
 def get_available_qualities(
@@ -277,8 +379,12 @@ def get_available_qualities(
     safe_progress(
         progress_callback,
         {
-            "stage": "fetching",
-            "percent": 0,
+            "stage":
+                "fetching",
+
+            "percent":
+                0,
+
             "message":
                 "Fetching video information..."
         }
@@ -300,7 +406,7 @@ def get_available_qualities(
     )
 
     print(
-        "yt-dlp version:",
+        "yt-dlp:",
         yt_dlp.version.__version__
     )
 
@@ -308,35 +414,38 @@ def get_available_qualities(
 
     options = {
 
-        "quiet": False,
+        "quiet":
+            False,
 
-        "no_warnings": False,
+        "no_warnings":
+            False,
 
-        "skip_download": True,
+        "skip_download":
+            True,
 
-        "noplaylist": True,
+        "noplaylist":
+            True,
 
-        "socket_timeout": 60,
+        "socket_timeout":
+            60,
 
-        "retries": 5,
+        "retries":
+            5,
 
-        "fragment_retries": 5,
+        "fragment_retries":
+            5,
 
     }
 
-    # =====================================================
-    # YOUTUBE
-    # =====================================================
+    # -----------------------------------------------------
+    # PLATFORM OPTIONS
+    # -----------------------------------------------------
 
     if platform == "youtube":
 
-        add_common_youtube_options(
+        add_youtube_options(
             options
         )
-
-    # =====================================================
-    # FACEBOOK
-    # =====================================================
 
     elif platform == "facebook":
 
@@ -344,9 +453,9 @@ def get_available_qualities(
             options
         )
 
-    # =====================================================
+    # -----------------------------------------------------
     # EXTRACT
-    # =====================================================
+    # -----------------------------------------------------
 
     with yt_dlp.YoutubeDL(
         options
@@ -360,7 +469,7 @@ def get_available_qualities(
     if not info:
 
         raise RuntimeError(
-            "yt-dlp returned no video information."
+            "yt-dlp returned no information."
         )
 
     formats = info.get(
@@ -410,17 +519,15 @@ def get_available_qualities(
 
     available = []
 
-    for height in requested_heights:
+    for requested in requested_heights:
 
-        # If there is a format at or above
-        # requested resolution, make it available.
         if any(
-            available_height >= height
-            for available_height in heights
+            actual >= requested
+            for actual in heights
         ):
 
             available.append(
-                str(height)
+                str(requested)
             )
 
     if formats:
@@ -460,14 +567,14 @@ def get_available_qualities(
     )
 
     print(
-        "Available resolutions:",
+        "Resolutions:",
         sorted(
             heights
         )
     )
 
     print(
-        "Selectable qualities:",
+        "Selectable:",
         available
     )
 
@@ -476,8 +583,12 @@ def get_available_qualities(
     safe_progress(
         progress_callback,
         {
-            "stage": "fetching",
-            "percent": 100,
+            "stage":
+                "fetching",
+
+            "percent":
+                100,
+
             "message":
                 "Video information received."
         }
@@ -513,12 +624,24 @@ def download_media(
     safe_progress(
         progress_callback,
         {
-            "stage": "downloading",
-            "percent": 0,
-            "downloaded": 0,
-            "total": 0,
-            "speed": 0,
-            "eta": None,
+            "stage":
+                "downloading",
+
+            "percent":
+                0,
+
+            "downloaded":
+                0,
+
+            "total":
+                0,
+
+            "speed":
+                0,
+
+            "eta":
+                None,
+
             "message":
                 "Starting download..."
         }
@@ -561,26 +684,23 @@ def download_media(
         url
     )
 
-    print(
-        "yt-dlp:",
-        yt_dlp.version.__version__
-    )
-
     print("=" * 70)
 
     last_percent = -1
 
-    def progress_hook(data):
+    # -----------------------------------------------------
+    # PROGRESS HOOK
+    # -----------------------------------------------------
+
+    def progress_hook(
+        data
+    ):
 
         nonlocal last_percent
 
         status = data.get(
             "status"
         )
-
-        # =================================================
-        # DOWNLOADING
-        # =================================================
 
         if status == "downloading":
 
@@ -621,15 +741,13 @@ def download_media(
                 "eta"
             )
 
-            rounded_percent = int(
+            rounded = int(
                 percent
             )
 
-            if rounded_percent != last_percent:
+            if rounded != last_percent:
 
-                last_percent = (
-                    rounded_percent
-                )
+                last_percent = rounded
 
                 safe_progress(
                     progress_callback,
@@ -660,10 +778,6 @@ def download_media(
                     }
                 )
 
-        # =================================================
-        # DOWNLOAD FINISHED
-        # =================================================
-
         elif status == "finished":
 
             safe_progress(
@@ -676,13 +790,13 @@ def download_media(
                         0,
 
                     "message":
-                        "Download complete. Preparing video..."
+                        "Preparing video..."
                 }
             )
 
-    # =====================================================
-    # YT-DLP OPTIONS
-    # =====================================================
+    # -----------------------------------------------------
+    # OPTIONS
+    # -----------------------------------------------------
 
     options = {
 
@@ -729,22 +843,17 @@ def download_media(
             [
                 progress_hook
             ],
-
     }
 
-    # =====================================================
-    # YOUTUBE
-    # =====================================================
+    # -----------------------------------------------------
+    # PLATFORM
+    # -----------------------------------------------------
 
     if platform == "youtube":
 
-        add_common_youtube_options(
+        add_youtube_options(
             options
         )
-
-    # =====================================================
-    # FACEBOOK
-    # =====================================================
 
     elif platform == "facebook":
 
@@ -752,9 +861,9 @@ def download_media(
             options
         )
 
-    # =====================================================
+    # -----------------------------------------------------
     # DOWNLOAD
-    # =====================================================
+    # -----------------------------------------------------
 
     with yt_dlp.YoutubeDL(
         options
@@ -770,30 +879,25 @@ def download_media(
             "Downloaded Video"
         )
 
-        # Prepare filename before
-        # YoutubeDL context closes.
         prepared_filename = (
             ydl.prepare_filename(
                 info
             )
         )
 
-    # =====================================================
-    # FIND OUTPUT FILE
-    # =====================================================
+    # -----------------------------------------------------
+    # FIND FILE
+    # -----------------------------------------------------
 
-    possible_files = []
+    possible_files = [
 
-    possible_files.append(
-        prepared_filename
-    )
+        prepared_filename,
 
-    possible_files.append(
         os.path.splitext(
             prepared_filename
         )[0]
-        + ".mp4"
-    )
+        + ".mp4",
+    ]
 
     possible_files.extend(
         glob.glob(
@@ -823,45 +927,28 @@ def download_media(
         ):
             continue
 
-        try:
-
-            size = os.path.getsize(
-                path
-            )
-
-        except Exception:
-
+        if os.path.getsize(
+            path
+        ) <= 0:
             continue
 
-        if size <= 0:
-            continue
+        final_file = path
 
         if path.lower().endswith(
             ".mp4"
         ):
 
-            final_file = path
-
             break
-
-        if final_file is None:
-
-            final_file = path
 
     if not final_file:
 
         raise FileNotFoundError(
-            "yt-dlp finished but "
-            "the final video file was not found."
+            "yt-dlp finished but the "
+            "downloaded video was not found."
         )
 
-    final_size = os.path.getsize(
+    file_size = os.path.getsize(
         final_file
-    )
-
-    final_mb = (
-        final_size /
-        (1024 * 1024)
     )
 
     print()
@@ -870,18 +957,15 @@ def download_media(
     print("=" * 70)
 
     print(
-        "Title:",
-        title
-    )
-
-    print(
         "File:",
         final_file
     )
 
     print(
         "Size:",
-        f"{final_mb:.2f} MB"
+        format_bytes(
+            file_size
+        )
     )
 
     print("=" * 70)
@@ -896,7 +980,7 @@ def download_media(
                 100,
 
             "message":
-                "Video preparation complete."
+                "Download complete."
         }
     )
 
@@ -922,7 +1006,7 @@ def download_media(
 
 
 # =========================================================
-# COMPRESS VIDEO
+# FFMPEG COMPRESSION
 # =========================================================
 
 def compress_video(
@@ -930,155 +1014,202 @@ def compress_video(
     target_mb=42.0,
     progress_callback=None
 ):
-    """
-    Compress a video to approximately target_mb.
 
-    Designed for Telegram uploads.
-    """
+    # -----------------------------------------------------
+    # CHECK INPUT
+    # -----------------------------------------------------
 
-    if not os.path.isfile(input_file):
+    if not os.path.isfile(
+        input_file
+    ):
+
         raise FileNotFoundError(
-            f"Input video not found: {input_file}"
+            f"Input video not found:\n"
+            f"{input_file}"
         )
+
+    # -----------------------------------------------------
+    # CHECK FFMPEG
+    # -----------------------------------------------------
+
+    ffmpeg_path = shutil.which(
+        "ffmpeg"
+    )
+
+    if not ffmpeg_path:
+
+        raise RuntimeError(
+            "FFmpeg is not installed "
+            "or is not available in PATH."
+        )
+
+    ffprobe_path = shutil.which(
+        "ffprobe"
+    )
+
+    if not ffprobe_path:
+
+        raise RuntimeError(
+            "FFprobe is not installed "
+            "or is not available in PATH."
+        )
+
+    # -----------------------------------------------------
+    # FILE SIZE
+    # -----------------------------------------------------
+
+    original_size = os.path.getsize(
+        input_file
+    )
+
+    original_mb = (
+        original_size /
+        (1024 * 1024)
+    )
 
     output_file = os.path.join(
         TEMP_DIR,
         f"compressed_{uuid.uuid4().hex}.mp4"
     )
 
-    original_size = os.path.getsize(input_file)
-
-    original_mb = (
-        original_size / (1024 * 1024)
-    )
-
     print()
     print("=" * 70)
-    print("FFMPEG COMPRESSION")
+    print("FFMPEG COMPRESSION STARTED")
     print("=" * 70)
 
-    print("Input:", input_file)
     print(
-        "Original size:",
+        "FFmpeg:",
+        ffmpeg_path
+    )
+
+    print(
+        "FFprobe:",
+        ffprobe_path
+    )
+
+    print(
+        "Input:",
+        input_file
+    )
+
+    print(
+        "Original:",
         f"{original_mb:.2f} MB"
     )
+
     print(
-        "Target size:",
+        "Target:",
         f"{target_mb:.2f} MB"
     )
 
-    # =====================================================
-    # GET VIDEO INFORMATION
-    # =====================================================
+    # -----------------------------------------------------
+    # PROBE VIDEO
+    # -----------------------------------------------------
 
     probe_command = [
-        "ffprobe",
+
+        ffprobe_path,
+
         "-v",
         "error",
+
         "-select_streams",
         "v:0",
+
         "-show_entries",
-        "stream=width,height,duration",
+        "stream=width,height",
+
+        "-show_entries",
+        "format=duration",
+
         "-of",
         "json",
-        input_file
+
+        input_file,
     ]
 
     try:
 
         probe = subprocess.run(
+
             probe_command,
+
             stdout=subprocess.PIPE,
+
             stderr=subprocess.PIPE,
+
             text=True,
+
             errors="replace",
-            timeout=60
-        )
 
-        if probe.returncode != 0:
-            raise RuntimeError(
-                probe.stderr
-            )
-
-        import json
-
-        probe_data = json.loads(
-            probe.stdout
-        )
-
-        streams = probe_data.get(
-            "streams",
-            []
-        )
-
-        if not streams:
-            raise RuntimeError(
-                "FFprobe could not find a video stream."
-            )
-
-        video_stream = streams[0]
-
-        width = int(
-            video_stream.get(
-                "width",
-                1280
-            )
-        )
-
-        height = int(
-            video_stream.get(
-                "height",
-                720
-            )
-        )
-
-        duration = float(
-            video_stream.get(
-                "duration",
-                0
-            )
-            or 0
+            timeout=120
         )
 
     except Exception as error:
 
-        print(
-            "FFprobe error:",
-            error
+        raise RuntimeError(
+            f"FFprobe could not run:\n{error}"
         )
+
+    if probe.returncode != 0:
 
         raise RuntimeError(
-            f"Could not read video information: {error}"
+
+            "FFprobe failed:\n\n"
+            +
+            probe.stderr[-5000:]
         )
 
-    if duration <= 0:
+    try:
 
-        # Try format-level duration
-        probe_command = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            input_file
-        ]
-
-        probe = subprocess.run(
-            probe_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            errors="replace"
+        data = json.loads(
+            probe.stdout
         )
 
-        try:
-            duration = float(
-                probe.stdout.strip()
-            )
-        except Exception:
-            duration = 0
+    except Exception as error:
+
+        raise RuntimeError(
+            "Could not parse FFprobe output:\n"
+            f"{error}"
+        )
+
+    streams = data.get(
+        "streams",
+        []
+    )
+
+    if not streams:
+
+        raise RuntimeError(
+            "No video stream found."
+        )
+
+    stream = streams[0]
+
+    width = int(
+        stream.get(
+            "width",
+            1280
+        )
+    )
+
+    height = int(
+        stream.get(
+            "height",
+            720
+        )
+    )
+
+    duration = float(
+        data.get(
+            "format",
+            {}
+        ).get(
+            "duration",
+            0
+        )
+        or 0
+    )
 
     if duration <= 0:
 
@@ -1096,9 +1227,9 @@ def compress_video(
         f"{duration:.2f} seconds"
     )
 
-    # =====================================================
-    # CALCULATE BITRATE
-    # =====================================================
+    # -----------------------------------------------------
+    # BITRATE
+    # -----------------------------------------------------
 
     target_bytes = (
         target_mb *
@@ -1107,15 +1238,21 @@ def compress_video(
     )
 
     target_bits = (
-        target_bytes * 8
+        target_bytes *
+        8
     )
 
-    # Reserve audio bitrate.
+    # Reserve space for:
+    #
+    # audio
+    # MP4 container
+    # metadata
+    #
     audio_kbps = 64
 
-    # Reserve container overhead.
     usable_bits = (
-        target_bits * 0.90
+        target_bits *
+        0.88
     )
 
     total_kbps = (
@@ -1125,30 +1262,18 @@ def compress_video(
     )
 
     video_kbps = int(
-        total_kbps - audio_kbps
+        total_kbps -
+        audio_kbps
     )
 
-    # Prevent unusably low bitrate.
     video_kbps = max(
         video_kbps,
-        150
+        180
     )
 
-    print(
-        "Calculated video bitrate:",
-        f"{video_kbps} kbps"
-    )
-
-    # =====================================================
-    # RESOLUTION CONTROL
-    # =====================================================
-
-    # Extremely large videos are unnecessarily expensive
-    # to encode and may consume too much RAM/CPU.
-    #
-    # Keep 1080p videos at 1080p.
-    # Reduce 1440p/4K videos.
-    # For extremely low bitrates, reduce resolution.
+    # -----------------------------------------------------
+    # SCALE
+    # -----------------------------------------------------
 
     if width >= 3840:
 
@@ -1162,19 +1287,19 @@ def compress_video(
             "scale=-2:1080"
         )
 
-    elif video_kbps < 700 and height > 720:
+    elif video_kbps < 600 and height > 720:
 
         scale_filter = (
             "scale=-2:720"
         )
 
-    elif video_kbps < 450 and height > 480:
+    elif video_kbps < 400 and height > 480:
 
         scale_filter = (
             "scale=-2:480"
         )
 
-    elif video_kbps < 300 and height > 360:
+    elif video_kbps < 280 and height > 360:
 
         scale_filter = (
             "scale=-2:360"
@@ -1187,28 +1312,30 @@ def compress_video(
         )
 
     print(
-        "Scale filter:",
+        "Video bitrate:",
+        f"{video_kbps} kbps"
+    )
+
+    print(
+        "Scale:",
         scale_filter
     )
 
-    # =====================================================
+    # -----------------------------------------------------
     # FFMPEG COMMAND
-    # =====================================================
+    # -----------------------------------------------------
 
     command = [
-        "ffmpeg",
+
+        ffmpeg_path,
 
         "-y",
 
         "-hide_banner",
 
-        "-loglevel",
-        "warning",
-
         "-i",
         input_file,
 
-        # VIDEO
         "-vf",
         scale_filter,
 
@@ -1230,21 +1357,19 @@ def compress_video(
         "-pix_fmt",
         "yuv420p",
 
-        # AUDIO
         "-c:a",
         "aac",
 
         "-b:a",
-        f"{audio_kbps}k",
+        "64k",
 
         "-ac",
         "2",
 
-        # MP4
         "-movflags",
         "+faststart",
 
-        output_file
+        output_file,
     ]
 
     print()
@@ -1253,13 +1378,14 @@ def compress_video(
     )
 
     print(
-        "Command:",
-        " ".join(command)
+        " ".join(
+            command
+        )
     )
 
-    # =====================================================
+    # -----------------------------------------------------
     # RUN FFMPEG
-    # =====================================================
+    # -----------------------------------------------------
 
     try:
 
@@ -1278,49 +1404,168 @@ def compress_video(
             bufsize=1
         )
 
-        stdout, stderr = process.communicate()
-
     except Exception as error:
 
-        print(
-            "FFmpeg process error:",
-            error
-        )
-
         raise RuntimeError(
-            f"Could not start FFmpeg: {error}"
+            f"Could not start FFmpeg:\n"
+            f"{error}"
         )
 
-    # =====================================================
-    # CHECK RESULT
-    # =====================================================
+    stderr_lines = []
 
-    if process.returncode != 0:
+    # -----------------------------------------------------
+    # READ OUTPUT
+    # -----------------------------------------------------
 
-    print("=" * 70)
-    print("FFMPEG FAILED")
-    print("=" * 70)
-    print("Return code:", process.returncode)
-    print("FFmpeg stderr:")
-    print(stderr)
-    print("=" * 70)
+    while True:
 
-    raise RuntimeError(
-        "FFmpeg compression failed.\n\n"
-        + stderr[-6000:]
+        line = process.stderr.readline()
+
+        if not line:
+
+            if process.poll() is not None:
+
+                break
+
+            continue
+
+        line = line.strip()
+
+        if line:
+
+            stderr_lines.append(
+                line
+            )
+
+            # Keep memory bounded.
+            if len(
+                stderr_lines
+            ) > 300:
+
+                stderr_lines.pop(
+                    0
+                )
+
+        # -------------------------------------------------
+        # PROGRESS
+        # -------------------------------------------------
+
+        if (
+            "time=" in line
+            and
+            duration > 0
+        ):
+
+            try:
+
+                time_part = (
+                    line
+                    .split(
+                        "time="
+                    )[1]
+                    .split()[0]
+                )
+
+                hours, minutes, seconds = (
+                    time_part.split(":")
+                )
+
+                elapsed = (
+                    float(hours) * 3600
+                    +
+                    float(minutes) * 60
+                    +
+                    float(seconds)
+                )
+
+                percent = min(
+
+                    (
+                        elapsed /
+                        duration
+                    ) * 100,
+
+                    100
+                )
+
+                safe_progress(
+                    progress_callback,
+                    {
+                        "stage":
+                            "compressing",
+
+                        "percent":
+                            percent,
+
+                        "message":
+                            "Compressing video..."
+                    }
+                )
+
+            except Exception:
+                pass
+
+    return_code = (
+        process.wait()
     )
 
-    # =====================================================
-    # VERIFY OUTPUT
-    # =====================================================
+    # -----------------------------------------------------
+    # FFMPEG FAILURE
+    # -----------------------------------------------------
+
+    if return_code != 0:
+
+        error_text = "\n".join(
+            stderr_lines
+        )
+
+        print()
+        print("=" * 70)
+        print("FFMPEG FAILED")
+        print("=" * 70)
+
+        print(
+            "Return code:",
+            return_code
+        )
+
+        print(
+            error_text
+        )
+
+        print("=" * 70)
+
+        if os.path.exists(
+            output_file
+        ):
+
+            try:
+
+                os.remove(
+                    output_file
+                )
+
+            except Exception:
+                pass
+
+        raise RuntimeError(
+
+            "FFmpeg compression failed.\n\n"
+            +
+            error_text[-5000:]
+        )
+
+    # -----------------------------------------------------
+    # OUTPUT CHECK
+    # -----------------------------------------------------
 
     if not os.path.isfile(
         output_file
     ):
 
         raise RuntimeError(
-            "FFmpeg finished but "
-            "no output file was created."
+            "FFmpeg completed but "
+            "the compressed file was not created."
         )
 
     compressed_size = os.path.getsize(
@@ -1334,7 +1579,7 @@ def compress_video(
 
     print()
     print("=" * 70)
-    print("FFMPEG COMPRESSION COMPLETE")
+    print("COMPRESSION COMPLETE")
     print("=" * 70)
 
     print(
@@ -1348,6 +1593,185 @@ def compress_video(
     )
 
     print("=" * 70)
+
+    # -----------------------------------------------------
+    # SECOND PASS
+    # -----------------------------------------------------
+
+    if compressed_mb > MAX_UPLOAD_MB:
+
+        print(
+            "First compression is still too large."
+        )
+
+        second_file = os.path.join(
+            TEMP_DIR,
+            f"compressed2_{uuid.uuid4().hex}.mp4"
+        )
+
+        stronger_bitrate = max(
+            120,
+            int(
+                video_kbps * 0.60
+            )
+        )
+
+        second_command = [
+
+            ffmpeg_path,
+
+            "-y",
+
+            "-hide_banner",
+
+            "-i",
+            input_file,
+
+            "-vf",
+            "scale='min(1280,iw)':-2",
+
+            "-c:v",
+            "libx264",
+
+            "-preset",
+            "veryfast",
+
+            "-b:v",
+            f"{stronger_bitrate}k",
+
+            "-maxrate",
+            f"{stronger_bitrate}k",
+
+            "-bufsize",
+            f"{stronger_bitrate * 2}k",
+
+            "-pix_fmt",
+            "yuv420p",
+
+            "-c:a",
+            "aac",
+
+            "-b:a",
+            "48k",
+
+            "-ac",
+            "2",
+
+            "-movflags",
+            "+faststart",
+
+            second_file,
+        ]
+
+        print(
+            "Running second compression..."
+        )
+
+        process2 = subprocess.run(
+
+            second_command,
+
+            stdout=subprocess.PIPE,
+
+            stderr=subprocess.PIPE,
+
+            text=True,
+
+            errors="replace"
+        )
+
+        if process2.returncode != 0:
+
+            print(
+                process2.stderr[-5000:]
+            )
+
+            if os.path.exists(
+                second_file
+            ):
+
+                try:
+
+                    os.remove(
+                        second_file
+                    )
+
+                except Exception:
+                    pass
+
+            raise RuntimeError(
+
+                "Second FFmpeg compression failed.\n\n"
+                +
+                process2.stderr[-5000:]
+            )
+
+        if not os.path.isfile(
+            second_file
+        ):
+
+            raise RuntimeError(
+                "Second compression did not "
+                "create an output file."
+            )
+
+        second_size = os.path.getsize(
+            second_file
+        )
+
+        second_mb = (
+            second_size /
+            (1024 * 1024)
+        )
+
+        if os.path.exists(
+            output_file
+        ):
+
+            try:
+
+                os.remove(
+                    output_file
+                )
+
+            except Exception:
+                pass
+
+        output_file = second_file
+
+        compressed_mb = second_mb
+
+        print(
+            "Second compression:",
+            f"{compressed_mb:.2f} MB"
+        )
+
+    # -----------------------------------------------------
+    # FINAL SIZE CHECK
+    # -----------------------------------------------------
+
+    if compressed_mb > MAX_UPLOAD_MB:
+
+        try:
+
+            os.remove(
+                output_file
+            )
+
+        except Exception:
+            pass
+
+        raise RuntimeError(
+
+            "Video could not be compressed "
+            "below the Telegram safe limit.\n\n"
+
+            f"Final size: "
+            f"{compressed_mb:.2f} MB\n\n"
+
+            "Please choose a lower quality, "
+            "such as 360p or 480p."
+        )
 
     safe_progress(
         progress_callback,
@@ -1366,184 +1790,6 @@ def compress_video(
         }
     )
 
-    # =====================================================
-    # IF STILL TOO LARGE
-    # =====================================================
-
-    if compressed_mb > 48:
-
-        print(
-            "Compressed file is still above "
-            "Telegram safe limit."
-        )
-
-        # Remove first result.
-        try:
-
-            os.remove(
-                output_file
-            )
-
-        except Exception:
-            pass
-
-        # Use stronger settings.
-        output_file_2 = os.path.join(
-            TEMP_DIR,
-            f"compressed_strong_{uuid.uuid4().hex}.mp4"
-        )
-
-        stronger_kbps = max(
-            120,
-            int(
-                video_kbps * 0.65
-            )
-        )
-
-        print(
-            "Retry bitrate:",
-            f"{stronger_kbps} kbps"
-        )
-
-        command_2 = [
-
-            "ffmpeg",
-
-            "-y",
-
-            "-hide_banner",
-
-            "-loglevel",
-            "warning",
-
-            "-i",
-            input_file,
-
-            "-vf",
-            "scale='min(1280,iw)':-2",
-
-            "-c:v",
-            "libx264",
-
-            "-preset",
-            "veryfast",
-
-            "-b:v",
-            f"{stronger_kbps}k",
-
-            "-maxrate",
-            f"{stronger_kbps}k",
-
-            "-bufsize",
-            f"{stronger_kbps * 2}k",
-
-            "-pix_fmt",
-            "yuv420p",
-
-            "-c:a",
-            "aac",
-
-            "-b:a",
-            "48k",
-
-            "-ac",
-            "2",
-
-            "-movflags",
-            "+faststart",
-
-            output_file_2
-        ]
-
-        process_2 = subprocess.Popen(
-
-            command_2,
-
-            stdout=subprocess.PIPE,
-
-            stderr=subprocess.PIPE,
-
-            text=True,
-
-            errors="replace"
-        )
-
-        stdout_2, stderr_2 = (
-            process_2.communicate()
-        )
-
-        if process_2.returncode != 0:
-
-            print(
-                stderr_2[-8000:]
-            )
-
-            if os.path.exists(
-                output_file_2
-            ):
-
-                try:
-                    os.remove(
-                        output_file_2
-                    )
-                except Exception:
-                    pass
-
-            raise RuntimeError(
-                "FFmpeg second compression attempt failed.\n\n"
-                + stderr_2[-4000:]
-            )
-
-        if not os.path.isfile(
-            output_file_2
-        ):
-
-            raise RuntimeError(
-                "Second FFmpeg compression "
-                "did not create an output file."
-            )
-
-        compressed_size = os.path.getsize(
-            output_file_2
-        )
-
-        compressed_mb = (
-            compressed_size /
-            (1024 * 1024)
-        )
-
-        output_file = output_file_2
-
-        print(
-            "Second compression:",
-            f"{compressed_mb:.2f} MB"
-        )
-
-    # =====================================================
-    # FINAL CHECK
-    # =====================================================
-
-    if compressed_mb > 48:
-
-        try:
-
-            os.remove(
-                output_file
-            )
-
-        except Exception:
-            pass
-
-        raise RuntimeError(
-
-            "Video is still too large after compression.\n\n"
-
-            f"Final size: {compressed_mb:.2f} MB\n"
-
-            "Please select a lower quality such as "
-            "360p or 480p."
-        )
-
     return output_file
 
 
@@ -1551,7 +1797,9 @@ def compress_video(
 # DELETE FILE
 # =========================================================
 
-def delete_file(file_path):
+def delete_file(
+    file_path
+):
 
     if not file_path:
         return
@@ -1574,11 +1822,6 @@ def delete_file(file_path):
     except Exception as error:
 
         print(
-            "Could not delete file:",
-            file_path
-        )
-
-        print(
-            "Error:",
+            "Cleanup error:",
             error
         )
