@@ -1297,28 +1297,18 @@ def compress_video(
 
     if process.returncode != 0:
 
-        print()
-        print("=" * 70)
-        print("FFMPEG ERROR")
-        print("=" * 70)
+    print("=" * 70)
+    print("FFMPEG FAILED")
+    print("=" * 70)
+    print("Return code:", process.returncode)
+    print("FFmpeg stderr:")
+    print(stderr)
+    print("=" * 70)
 
-        print(stderr[-8000:])
-
-        print("=" * 70)
-
-        if os.path.exists(output_file):
-
-            try:
-                os.remove(
-                    output_file
-                )
-            except Exception:
-                pass
-
-        raise RuntimeError(
-            "FFmpeg compression failed.\n\n"
-            + stderr[-4000:]
-        )
+    raise RuntimeError(
+        "FFmpeg compression failed.\n\n"
+        + stderr[-6000:]
+    )
 
     # =====================================================
     # VERIFY OUTPUT
