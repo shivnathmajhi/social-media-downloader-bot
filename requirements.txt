@@ -1,4 +1,4 @@
 python-telegram-bot>=22,<23
 python-dotenv>=1.0
-yt-dlp
+yt-dlp[default]
 playwright>=1.50

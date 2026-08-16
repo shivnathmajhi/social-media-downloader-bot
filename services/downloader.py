@@ -2,9 +2,7 @@ import os
 import sys
 import uuid
 import glob
-import json
 import subprocess
-import threading
 from pathlib import Path
 
 import yt_dlp
@@ -18,6 +16,10 @@ TEMP_DIR = "temp"
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+
+# =========================================================
+# QUALITY FORMATS
+# =========================================================
 
 QUALITY_FORMATS = {
     "144": "bestvideo[height<=144]+bestaudio/best[height<=144]/best",
@@ -47,6 +49,7 @@ def safe_progress(progress_callback, data):
 
     try:
         progress_callback(data)
+
     except Exception as error:
         print(
             "Progress callback error:",
@@ -62,6 +65,7 @@ def format_bytes(value):
 
     try:
         value = float(value)
+
     except Exception:
         return "0 B"
 
@@ -75,7 +79,6 @@ def format_bytes(value):
     for unit in units:
 
         if value < 1024:
-
             return f"{value:.2f} {unit}"
 
         value /= 1024
@@ -94,6 +97,7 @@ def format_eta(seconds):
 
     try:
         seconds = int(float(seconds))
+
     except Exception:
         return "--"
 
@@ -111,6 +115,7 @@ def format_eta(seconds):
     )
 
     if hours:
+
         return (
             f"{hours}h "
             f"{minutes}m "
@@ -118,12 +123,85 @@ def format_eta(seconds):
         )
 
     if minutes:
+
         return (
             f"{minutes}m "
             f"{seconds}s"
         )
 
     return f"{seconds}s"
+
+
+# =========================================================
+# YOUTUBE COOKIE SUPPORT
+# =========================================================
+
+def add_youtube_options(options):
+    """
+    Add YouTube authentication settings when configured.
+
+    Railway:
+        YOUTUBE_COOKIES_FILE=/app/cookies/youtube.txt
+
+    The cookie file must NOT be committed to GitHub.
+    """
+
+    cookies_file = os.getenv(
+        "YOUTUBE_COOKIES_FILE",
+        ""
+    ).strip()
+
+    if cookies_file:
+
+        cookies_file = os.path.abspath(
+            cookies_file
+        )
+
+        if os.path.isfile(cookies_file):
+
+            options["cookiefile"] = cookies_file
+
+            print(
+                "YouTube cookies:",
+                "enabled"
+            )
+
+        else:
+
+            print(
+                "WARNING: YOUTUBE_COOKIES_FILE was set "
+                "but the file does not exist:",
+                cookies_file
+            )
+
+    else:
+
+        print(
+            "YouTube cookies:",
+            "not configured"
+        )
+
+
+# =========================================================
+# COMMON YOUTUBE OPTIONS
+# =========================================================
+
+def add_common_youtube_options(options):
+    """
+    Settings needed by current yt-dlp YouTube extraction.
+    """
+
+    # Deno is installed in the Docker image.
+    options["js_runtimes"] = {
+        "deno": "/root/.deno/bin/deno"
+    }
+
+    # Allow yt-dlp to use the bundled EJS components.
+    options["remote_components"] = [
+        "ejs:npm"
+    ]
+
+    add_youtube_options(options)
 
 
 # =========================================================
@@ -154,7 +232,7 @@ def get_available_qualities(
 
         "quiet": True,
 
-        "no_warnings": True,
+        "no_warnings": False,
 
         "skip_download": True,
 
@@ -163,6 +241,20 @@ def get_available_qualities(
         "socket_timeout": 60,
 
     }
+
+    # ---------------------------------------------------------
+    # YOUTUBE
+    # ---------------------------------------------------------
+
+    if platform == "youtube":
+
+        add_common_youtube_options(
+            options
+        )
+
+    # ---------------------------------------------------------
+    # FACEBOOK
+    # ---------------------------------------------------------
 
     if platform == "facebook":
 
@@ -181,6 +273,29 @@ def get_available_qualities(
             "Referer":
                 "https://www.facebook.com/",
         }
+
+        cookies_file = os.getenv(
+            "FACEBOOK_COOKIES_FILE",
+            ""
+        ).strip()
+
+        if cookies_file:
+
+            cookies_file = os.path.abspath(
+                cookies_file
+            )
+
+            if os.path.isfile(
+                cookies_file
+            ):
+
+                options[
+                    "cookiefile"
+                ] = cookies_file
+
+    # ---------------------------------------------------------
+    # EXTRACT
+    # ---------------------------------------------------------
 
     with yt_dlp.YoutubeDL(
         options
@@ -208,10 +323,13 @@ def get_available_qualities(
             continue
 
         try:
+
             height = int(
                 height
             )
+
         except Exception:
+
             continue
 
         if height > 0:
@@ -346,6 +464,11 @@ def download_media(
     )
 
     print(
+        "yt-dlp:",
+        yt_dlp.version.__version__
+    )
+
+    print(
         "Python:",
         sys.executable
     )
@@ -401,7 +524,6 @@ def download_media(
                 "eta"
             )
 
-            # Prevent excessive Telegram edits
             rounded_percent = int(
                 percent
             )
@@ -506,6 +628,20 @@ def download_media(
 
     }
 
+    # ---------------------------------------------------------
+    # YOUTUBE
+    # ---------------------------------------------------------
+
+    if platform == "youtube":
+
+        add_common_youtube_options(
+            options
+        )
+
+    # ---------------------------------------------------------
+    # FACEBOOK
+    # ---------------------------------------------------------
+
     if platform == "facebook":
 
         options[
@@ -543,6 +679,10 @@ def download_media(
                     "cookiefile"
                 ] = cookies_file
 
+    # ---------------------------------------------------------
+    # DOWNLOAD
+    # ---------------------------------------------------------
+
     with yt_dlp.YoutubeDL(
         options
     ) as ydl:
@@ -557,9 +697,9 @@ def download_media(
         "Downloaded Video"
     )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
     # FIND FINAL FILE
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
 
     possible_files = []
 
@@ -581,6 +721,7 @@ def download_media(
         )
 
     except Exception:
+
         pass
 
     possible_files.extend(
@@ -621,6 +762,7 @@ def download_media(
         if file_path.lower().endswith(
             ".mp4"
         ):
+
             break
 
     if not final_file:
@@ -785,7 +927,6 @@ def compress_video(
             8
         )
 
-        # Reserve audio bitrate
         audio_bitrate = 96000
 
         video_bitrate = (
@@ -799,7 +940,8 @@ def compress_video(
         )
 
         video_kbps = int(
-            video_bitrate / 1000
+            video_bitrate /
+            1000
         )
 
     else:
@@ -876,10 +1018,6 @@ def compress_video(
 
         line = line.strip()
 
-        # -------------------------------------------------
-        # Parse FFmpeg time
-        # -------------------------------------------------
-
         if "time=" in line and duration > 0:
 
             try:
@@ -923,6 +1061,7 @@ def compress_video(
                 )
 
             except Exception:
+
                 pass
 
     return_code = process.wait()
